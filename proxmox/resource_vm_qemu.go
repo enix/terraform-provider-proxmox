@@ -14,7 +14,7 @@ import (
 	"github.com/hashicorp/terraform/helper/schema"
 )
 
-func resourceVmQemu() *schema.Resource {
+	func resourceVmQemu() *schema.Resource {
 	*pxapi.Debug = true
 	return &schema.Resource{
 		Create: resourceVmQemuCreate,
@@ -378,7 +378,7 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 		pmParallelEnd(pconf)
 		return fmt.Errorf("Duplicate VM name (%s) with vmId: %d on different target_node=%s", vmName, dupVmr.VmId(), dupVmr.Node())
 	}
-
+	d.Partial(true)
 	vmr := dupVmr
 
 	if vmr == nil {
@@ -404,6 +404,16 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 				pmParallelEnd(pconf)
 				return err
 			}
+			d.SetId(resourceId(targetNode, "qemu", vmr.VmId()))
+			d.SetPartial("name")
+			d.SetPartial("clone")
+
+			err = config.UpdateConfig(vmr, client)
+			if err != nil {
+				pmParallelEnd(pconf)
+				return err
+			}
+			d.SetPartial("memory")
 
 			// give sometime to proxmox to catchup
 			time.Sleep(5 * time.Second)
@@ -413,7 +423,7 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 				pmParallelEnd(pconf)
 				return err
 			}
-
+			d.SetPartial("disk")
 		} else if d.Get("iso").(string) != "" {
 			config.QemuIso = d.Get("iso").(string)
 			err := config.CreateVm(vmr, client)
@@ -421,17 +431,22 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 				pmParallelEnd(pconf)
 				return err
 			}
+			d.SetPartial("name")
 		}
 	} else {
 		log.Printf("[DEBUG] recycling VM vmId: %d", vmr.VmId())
 
 		client.StopVm(vmr)
+		d.SetId(resourceId(targetNode, "qemu", vmr.VmId()))
+		d.SetPartial("name")
+		d.SetPartial("clone")
 
 		err := config.UpdateConfig(vmr, client)
 		if err != nil {
 			pmParallelEnd(pconf)
 			return err
 		}
+		d.SetPartial("memory")
 
 		// give sometime to proxmox to catchup
 		time.Sleep(5 * time.Second)
@@ -441,8 +456,8 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 			pmParallelEnd(pconf)
 			return err
 		}
+		d.SetPartial("disk")
 	}
-	d.SetId(resourceId(targetNode, "qemu", vmr.VmId()))
 
 	// give sometime to proxmox to catchup
 	time.Sleep(5 * time.Second)
@@ -642,8 +657,7 @@ func prepareDiskSize(
 
 		diffSize := int(math.Ceil(diskSize - clonedDiskSize))
 		if diskSize > clonedDiskSize {
-			log.Print("[DEBUG] resizing disk " + diskName)
-			_, err = client.ResizeQemuDisk(vmr, diskName, diffSize)
+			_, err := client.ResizeQemuDisk(vmr, diskName, diffSize)
 			if err != nil {
 				return err
 			}
