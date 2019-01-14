@@ -1,5 +1,6 @@
-# Proxmox 4 Terraform
+# Proxmox 5 Terraform Provider & Provisioner plugin
 
+This is a fork of Telmate's initial work.
 Terraform provider plugin for proxmox
 
 
@@ -7,7 +8,7 @@ Terraform provider plugin for proxmox
 
 ## Build
 
-Requires https://github.com/Telmate/proxmox-api-go
+Requires https://github.com/enix/proxmox-api-go
 
 ```
 go build -o terraform-provider-proxmox
