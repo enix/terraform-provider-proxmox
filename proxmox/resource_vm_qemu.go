@@ -311,6 +311,7 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 			return err
 		}
 		d.SetPartial("memory")
+		d.SetPartial("cloud_init")
 
 		// give sometime to proxmox to catchup
 		time.Sleep(5 * time.Second)
@@ -437,17 +438,35 @@ func resourceVmQemuRead(d *schema.ResourceData, meta interface{}) error {
 	d.Set("cores", config.QemuCores)
 	d.Set("sockets", config.QemuSockets)
 	d.Set("qemu_os", config.QemuOs)
-	// Cloud-init.
-	cloudInitMap := make(map[string]interface{})
-	cloudInitMap["user"] = config.CIuser
-	cloudInitMap["password"] = config.CIpassword
-	cloudInitMap["ipconfig0"] = config.Ipconfig0
-	d.Set("cloud_init", cloudInitMap)
-	// d.Set("cipassword", config.CIpassword)
-	// d.Set("searchdomain", config.Searchdomain)
-	// d.Set("nameserver", config.Nameserver)
-	// d.Set("sshkeys", config.Sshkeys)
-	// d.Set("ipconfig1", config.Ipconfig1)
+
+	newCloudInitMap := make(map[string]interface{})
+	oldCloudInitMap := d.Get("cloud_init").(map[string]interface{})
+	if config.CIuser != "" {
+		newCloudInitMap["user"]	= config.CIuser
+	}
+	if config.CIpassword != "" {
+		// Proxmox do not give back the password and replaces every character by *
+		// StateFunc does not seem to work to rewrite as *
+		// newCloudInitMap["password"] = config.CIpassword
+		newCloudInitMap["password"]	= oldCloudInitMap["password"]
+	}
+	if config.Searchdomain != "" {
+		newCloudInitMap["searchdomain"]	= config.Searchdomain
+	}
+	if config.Nameserver != "" {
+		newCloudInitMap["nameserver"]	= config.Nameserver
+	}
+	if config.Sshkeys != "" {
+		newCloudInitMap["sshkeys"]	= config.Sshkeys
+	}
+	if config.Ipconfig0 != "" {
+		newCloudInitMap["ipconfig0"]	= config.Ipconfig0
+	}
+	if config.Ipconfig1 != "" {
+		newCloudInitMap["ipconfig1"]	= config.Ipconfig1
+	}
+	d.Set("cloud_init", newCloudInitMap)
+
 	// // Disks.
 	// configDisksSet := d.Get("disk").([]interface{})
 	// activeDisksSet := updateDevicesSet(configDisksSet, config.QemuDisks)
@@ -524,21 +543,19 @@ func prepareDiskSize(
 	return nil
 }
 
-// Converting from schema.TypeSet to map of id and conf for each device,
-// which will be sent to Proxmox API.
-func devicesSetToMap(devicesSet *schema.Set) pxapi.QemuDevices {
+// func devicesSetToMap(devicesSet *schema.Set) pxapi.QemuDevices {
 
-	devicesMap := pxapi.QemuDevices{}
+// 	devicesMap := pxapi.QemuDevices{}
 
-	for _, set := range devicesSet.List() {
-		setMap, isMap := set.(map[string]interface{})
-		if isMap {
-			setID := setMap["id"].(int)
-			devicesMap[setID] = setMap
-		}
-	}
-	return devicesMap
-}
+// 	for _, set := range devicesSet.List() {
+// 		setMap, isMap := set.(map[string]interface{})
+// 		if isMap {
+// 			setID := setMap["id"].(int)
+// 			devicesMap[setID] = setMap
+// 		}
+// 	}
+// 	return devicesMap
+// }
 
 func devicesListToQemuDevices(devicesList []interface{}) pxapi.QemuDevices {
 
@@ -552,66 +569,68 @@ func devicesListToQemuDevices(devicesList []interface{}) pxapi.QemuDevices {
 
 // Update schema.TypeSet with new values comes from Proxmox API.
 // TODO: Maybe it's better to create a new Set instead add to current one.
-func updateDevicesSet(
-	devicesSet *schema.Set,
-	devicesMap pxapi.QemuDevices,
-) *schema.Set {
 
-	configDevicesMap := devicesSetToMap(devicesSet)
-	activeDevicesMap := updateDevicesDefaults(devicesMap, configDevicesMap)
+// func updateDevicesSet(
+// 	devicesSet *schema.Set,
+// 	devicesMap pxapi.QemuDevices,
+// ) *schema.Set {
 
-	for _, setConf := range devicesSet.List() {
-		devicesSet.Remove(setConf)
-		setConfMap := setConf.(map[string]interface{})
-		deviceID := setConfMap["id"].(int)
-		// Value type should be one of types allowed by Terraform schema types.
-		for key, value := range activeDevicesMap[deviceID] {
-			// This nested switch is used for nested config like in `net[n]`,
-			// where Proxmox uses `key=<0|1>` in string" at the same time
-			// a boolean could be used in ".tf" files.
-			switch setConfMap[key].(type) {
-			case bool:
-				switch value.(type) {
-				// If the key is bool and value is int (which comes from Proxmox API),
-				// should be converted to bool (as in ".tf" conf).
-				case int:
-					sValue := strconv.Itoa(value.(int))
-					bValue, err := strconv.ParseBool(sValue)
-					if err == nil {
-						setConfMap[key] = bValue
-					}
-				// If value is bool, which comes from Terraform conf, add it directly.
-				case bool:
-					setConfMap[key] = value
-				}
-			// Anything else will be added as it is.
-			default:
-				setConfMap[key] = value
-			}
-			devicesSet.Add(setConfMap)
-		}
-	}
+// 	configDevicesMap := devicesSetToMap(devicesSet)
+// 	activeDevicesMap := updateDevicesDefaults(devicesMap, configDevicesMap)
 
-	return devicesSet
-}
+// 	for _, setConf := range devicesSet.List() {
+// 		devicesSet.Remove(setConf)
+// 		setConfMap := setConf.(map[string]interface{})
+// 		deviceID := setConfMap["id"].(int)
+// 		// Value type should be one of types allowed by Terraform schema types.
+// 		for key, value := range activeDevicesMap[deviceID] {
+// 			// This nested switch is used for nested config like in `net[n]`,
+// 			// where Proxmox uses `key=<0|1>` in string" at the same time
+// 			// a boolean could be used in ".tf" files.
+// 			switch setConfMap[key].(type) {
+// 			case bool:
+// 				switch value.(type) {
+// 				// If the key is bool and value is int (which comes from Proxmox API),
+// 				// should be converted to bool (as in ".tf" conf).
+// 				case int:
+// 					sValue := strconv.Itoa(value.(int))
+// 					bValue, err := strconv.ParseBool(sValue)
+// 					if err == nil {
+// 						setConfMap[key] = bValue
+// 					}
+// 				// If value is bool, which comes from Terraform conf, add it directly.
+// 				case bool:
+// 					setConfMap[key] = value
+// 				}
+// 			// Anything else will be added as it is.
+// 			default:
+// 				setConfMap[key] = value
+// 			}
+// 			devicesSet.Add(setConfMap)
+// 		}
+// 	}
+
+// 	return devicesSet
+// }
 
 // Because default values are not stored in Proxmox, so the API returns only active values.
 // So to prevent Terraform doing unnecessary diffs, this function reads default values
 // from Terraform itself, and fill empty fields.
-func updateDevicesDefaults(
-	activeDevicesMap pxapi.QemuDevices,
-	configDevicesMap pxapi.QemuDevices,
-) pxapi.QemuDevices {
 
-	for deviceID, deviceConf := range configDevicesMap {
-		if _, ok := activeDevicesMap[deviceID]; !ok {
-			activeDevicesMap[deviceID] = configDevicesMap[deviceID]
-		}
-		for key, value := range deviceConf {
-			if _, ok := activeDevicesMap[deviceID][key]; !ok {
-				activeDevicesMap[deviceID][key] = value
-			}
-		}
-	}
-	return activeDevicesMap
-}
+// func updateDevicesDefaults(
+// 	activeDevicesMap pxapi.QemuDevices,
+// 	configDevicesMap pxapi.QemuDevices,
+// ) pxapi.QemuDevices {
+
+// 	for deviceID, deviceConf := range configDevicesMap {
+// 		if _, ok := activeDevicesMap[deviceID]; !ok {
+// 			activeDevicesMap[deviceID] = configDevicesMap[deviceID]
+// 		}
+// 		for key, value := range deviceConf {
+// 			if _, ok := activeDevicesMap[deviceID][key]; !ok {
+// 				activeDevicesMap[deviceID][key] = value
+// 			}
+// 		}
+// 	}
+// 	return activeDevicesMap
+// }

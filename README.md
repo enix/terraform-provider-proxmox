@@ -1,8 +1,6 @@
-# Proxmox 5 Terraform Provider & Provisioner plugin
+# Proxmox 5.3 Terraform Provider & Provisioner plugin
 
-This is a fork of Telmate's initial work.
-Terraform provider plugin for proxmox
-
+This is a fork of Telmate's initial work. It is mainly focused on cloud-init based images.
 
 ## Working prototype
 
@@ -40,91 +38,42 @@ resource "proxmox_vm_qemu" "cloudinit-test" {
 	name = "tftest1.xyz.com"
 	desc = "tf description"
 	target_node = "proxmox1-xx"
-
 	clone = "ci-ubuntu-template"
 	storage = "local"
 	cores = 3
 	sockets = 1
 	memory = 2560
-	disk_gb = 4
-	nic = "virtio"
-	bridge = "vmbr0"
-
-	ssh_user = "root"
-	ssh_private_key = <<EOF
------BEGIN RSA PRIVATE KEY-----
-private ssh key root
------END RSA PRIVATE KEY-----
-EOF
-
-	os_type = "cloud-init"
-	ipconfig0 = "ip=10.0.2.99, gw=10.0.2.2"
-
-	sshkeys = <<EOF
-ssh-rsa AAAAB3NzaC1kj...key1
-ssh-rsa AAAAB3NzaC1kj...key2
-EOF
-
-	provisioner "remote-exec" {
-		inline = [
-			"ip a"
-		]
-	}
-}
-
-/* Uses custom eth1 user-net SSH portforward */
-resource "proxmox_vm_qemu" "prepprovision-test" {
-	name = "tftest1.xyz.com"
-	desc = "tf description"
-	target_node = "proxmox1-xx"
-
-	clone = "terraform-ubuntu1404-template"
-	cores = 3
-	sockets = 1
-	memory = 2560
 	network {
-		id = 0
 		model = "virtio"
+		bridge = "vmbr0"
 	}
 	network {
-		id = 1
 		model = "virtio"
-		bridge = "vmbr1"
+		bridge = "vmbr0"
 	}
 	disk {
-		id = 0
 		type = virtio
 		storage = local-lvm
 		storage_type = lvm
 		size = 4G
 		backup = true
 	}
-	preprovision = true
-	ssh_forward_ip = "10.0.0.1"
-	ssh_user = "terraform"
-	ssh_private_key = <<EOF
------BEGIN RSA PRIVATE KEY-----
-private ssh key terraform
------END RSA PRIVATE KEY-----
+	cloud_init {
+		user = "debian"
+		password = "toto"
+		ipconfig0 = "ip=10.0.2.99, gw=10.0.2.2"
+		sshkeys = <<EOF
+ssh-rsa AAAAB3NzaC1kj...key1
+ssh-rsa AAAAB3NzaC1kj...key2
 EOF
-
-	os_type = "ubuntu"
-	os_network_config = <<EOF
-auto eth0
-iface eth0 inet dhcp
-EOF
+	}
 
 	provisioner "remote-exec" {
 		inline = [
 			"ip a"
 		]
 	}
-
-	provisioner "proxmox" {
-		action = "sshbackward"
-	}
 }
-
 ```
 ### Provider usage
 You can start from either an ISO or clone an existing VM.
