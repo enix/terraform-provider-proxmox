@@ -75,15 +75,10 @@ import (
 				Required: true,
 			},
 			"network": &schema.Schema{
-				Type:          schema.TypeSet,
+				Type:          schema.TypeList,
 				Optional:      true,
-				ConflictsWith: []string{"nic", "bridge", "vlan", "mac"},
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
-						"id": &schema.Schema{
-							Type:     schema.TypeInt,
-							Required: true,
-						},
 						"model": &schema.Schema{
 							Type:     schema.TypeString,
 							Required: true,
@@ -128,15 +123,10 @@ import (
 				},
 			},
 			"disk": &schema.Schema{
-				Type:          schema.TypeSet,
+				Type:          schema.TypeList,
 				Optional:      true,
-				ConflictsWith: []string{"disk_gb", "storage", "storage_type"},
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
-						"id": &schema.Schema{
-							Type:     schema.TypeInt,
-							Required: true,
-						},
 						"type": &schema.Schema{
 							Type:     schema.TypeString,
 							Required: true,
@@ -183,75 +173,6 @@ import (
 					},
 				},
 			},
-			// Deprecated single disk config.
-			"disk_gb": {
-				Type:       schema.TypeFloat,
-				Deprecated: "Use `disk.size` instead",
-				Optional:   true,
-				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
-					// bigger ok
-					oldf, _ := strconv.ParseFloat(old, 64)
-					newf, _ := strconv.ParseFloat(new, 64)
-					return oldf >= newf
-				},
-			},
-			"storage": {
-				Type:       schema.TypeString,
-				Deprecated: "Use `disk.storage` instead",
-				Optional:   true,
-			},
-			"storage_type": {
-				Type:       schema.TypeString,
-				Deprecated: "Use `disk.type` instead",
-				Optional:   true,
-				ForceNew:   false,
-				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
-					if new == "" {
-						return true // empty template ok
-					}
-					return strings.TrimSpace(old) == strings.TrimSpace(new)
-				},
-			},
-			// Deprecated single nic config.
-			"nic": {
-				Type:       schema.TypeString,
-				Deprecated: "Use `network` instead",
-				Optional:   true,
-			},
-			"bridge": {
-				Type:       schema.TypeString,
-				Deprecated: "Use `network.bridge` instead",
-				Optional:   true,
-			},
-			"vlan": {
-				Type:       schema.TypeInt,
-				Deprecated: "Use `network.tag` instead",
-				Optional:   true,
-				Default:    -1,
-			},
-			"mac": {
-				Type:       schema.TypeString,
-				Deprecated: "Use `network.macaddr` to access the auto generated MAC address",
-				Optional:   true,
-				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
-					if new == "" {
-						return true // macaddr auto-generates and its ok
-					}
-					return strings.TrimSpace(old) == strings.TrimSpace(new)
-				},
-			},
-			"os_type": {
-				Type:     schema.TypeString,
-				Optional: true,
-			},
-			"os_network_config": {
-				Type:     schema.TypeString,
-				Optional: true,
-				ForceNew: true,
-				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
-					return strings.TrimSpace(old) == strings.TrimSpace(new)
-				},
-			},
 			"ssh_forward_ip": {
 				Type:     schema.TypeString,
 				Optional: true,
@@ -269,27 +190,16 @@ import (
 					return strings.TrimSpace(old) == strings.TrimSpace(new)
 				},
 			},
-			"force_create": {
-				Type:     schema.TypeBool,
-				Optional: true,
-				Default:  false,
-			},
-			"ci_wait": { // how long to wait before provision
-				Type:     schema.TypeInt,
-				Optional: true,
-				Default:  30,
-				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
-					if old == "" {
-						return true // old empty ok
-					}
-					return strings.TrimSpace(old) == strings.TrimSpace(new)
-				},
-			},
-			"ciuser": {
+			"cloud_init": &schema.Schema{
+				Type:          schema.TypeMap,
+				Optional:      true,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"user": {
 				Type:     schema.TypeString,
 				Optional: true,
 			},
-			"cipassword": {
+						"password": {
 				Type:     schema.TypeString,
 				Optional: true,
 			},
@@ -323,6 +233,8 @@ import (
 				ConflictsWith: []string{"ssh_forward_ip", "ssh_user", "ssh_private_key", "os_type", "os_network_config"},
 			},
 		},
+			},
+		},
 	}
 }
 
@@ -333,10 +245,11 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 	pmParallelBegin(pconf)
 	client := pconf.Client
 	vmName := d.Get("name").(string)
-	networks := d.Get("network").(*schema.Set)
-	qemuNetworks := devicesSetToMap(networks)
-	disks := d.Get("disk").(*schema.Set)
-	qemuDisks := devicesSetToMap(disks)
+	networks := d.Get("network").([]interface{})
+	qemuNetworks := devicesListToQemuDevices(networks)
+	disks := d.Get("disk").([]interface{})
+	qemuDisks := devicesListToQemuDevices(disks)
+	cloudInit := d.Get("cloud_init").(map[string]interface{})
 
 	config := pxapi.ConfigQemu{
 		Name:         vmName,
@@ -348,40 +261,27 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 		QemuOs:       d.Get("qemu_os").(string),
 		QemuNetworks: qemuNetworks,
 		QemuDisks:    qemuDisks,
-		// Cloud-init.
-		CIuser:       d.Get("ciuser").(string),
-		CIpassword:   d.Get("cipassword").(string),
-		Searchdomain: d.Get("searchdomain").(string),
-		Nameserver:   d.Get("nameserver").(string),
-		Sshkeys:      d.Get("sshkeys").(string),
-		Ipconfig0:    d.Get("ipconfig0").(string),
-		Ipconfig1:    d.Get("ipconfig1").(string),
-		// Deprecated single disk config.
-		Storage:  d.Get("storage").(string),
-		DiskSize: d.Get("disk_gb").(float64),
-		// Deprecated single nic config.
-		QemuNicModel: d.Get("nic").(string),
-		QemuBrige:    d.Get("bridge").(string),
-		QemuVlanTag:  d.Get("vlan").(int),
-		QemuMacAddr:  d.Get("mac").(string),
 	}
-	log.Print("[DEBUG] checking for duplicate name")
-	dupVmr, _ := client.GetVmRefByName(vmName)
 
-	forceCreate := d.Get("force_create").(bool)
+	config.CIuser, _		= cloudInit["user"].(string)
+	config.CIpassword, _	= cloudInit["password"].(string)
+	config.Searchdomain, _	= cloudInit["searchdomain"].(string)
+	config.Nameserver, _	= cloudInit["nameserver"].(string)
+	config.Sshkeys, _		= cloudInit["sshkeys"].(string)
+	config.Ipconfig0, _		= cloudInit["ipconfig0"].(string)
+	config.Ipconfig1, _		= cloudInit["ipconfig1"].(string)
+	log.Print("[DEBUG] checking for duplicate name")
+	vmr, _ := client.GetVmRefByName(vmName)
+
 	targetNode := d.Get("target_node").(string)
 
-	if dupVmr != nil && forceCreate {
+	if vmr != nil {
 		pmParallelEnd(pconf)
-		return fmt.Errorf("Duplicate VM name (%s) with vmId: %d. Set force_create=false to recycle", vmName, dupVmr.VmId())
-	} else if dupVmr != nil && dupVmr.Node() != targetNode {
-		pmParallelEnd(pconf)
-		return fmt.Errorf("Duplicate VM name (%s) with vmId: %d on different target_node=%s", vmName, dupVmr.VmId(), dupVmr.Node())
+		return fmt.Errorf("Duplicate VM name (%s) with vmId: %d on target_node=%s", vmName, vmr.VmId(), vmr.Node())
 	}
-	d.Partial(true)
-	vmr := dupVmr
 
-	if vmr == nil {
+	d.Partial(true)
+
 		// get unique id
 		nextid, err := nextVmId(pconf)
 		if err != nil {
@@ -423,7 +323,6 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 				pmParallelEnd(pconf)
 				return err
 			}
-			d.SetPartial("disk")
 		} else if d.Get("iso").(string) != "" {
 			config.QemuIso = d.Get("iso").(string)
 			err := config.CreateVm(vmr, client)
@@ -433,37 +332,14 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 			}
 			d.SetPartial("name")
 		}
-	} else {
-		log.Printf("[DEBUG] recycling VM vmId: %d", vmr.VmId())
+	d.Partial(false)
 
-		client.StopVm(vmr)
-		d.SetId(resourceId(targetNode, "qemu", vmr.VmId()))
-		d.SetPartial("name")
-		d.SetPartial("clone")
-
-		err := config.UpdateConfig(vmr, client)
-		if err != nil {
-			pmParallelEnd(pconf)
-			return err
-		}
-		d.SetPartial("memory")
 
 		// give sometime to proxmox to catchup
 		time.Sleep(5 * time.Second)
 
-		err = prepareDiskSize(client, vmr, qemuDisks)
-		if err != nil {
-			pmParallelEnd(pconf)
-			return err
-		}
-		d.SetPartial("disk")
-	}
-
-	// give sometime to proxmox to catchup
-	time.Sleep(5 * time.Second)
-
 	log.Print("[DEBUG] starting VM")
-	_, err := client.StartVm(vmr)
+	_, err = client.StartVm(vmr)
 	if err != nil {
 		pmParallelEnd(pconf)
 		return err
@@ -508,14 +384,6 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) error {
 		Sshkeys:      d.Get("sshkeys").(string),
 		Ipconfig0:    d.Get("ipconfig0").(string),
 		Ipconfig1:    d.Get("ipconfig1").(string),
-		// Deprecated single disk config.
-		Storage:  d.Get("storage").(string),
-		DiskSize: d.Get("disk_gb").(float64),
-		// Deprecated single nic config.
-		QemuNicModel: d.Get("nic").(string),
-		QemuBrige:    d.Get("bridge").(string),
-		QemuVlanTag:  d.Get("vlan").(int),
-		QemuMacAddr:  d.Get("mac").(string),
 	}
 
 	err = config.UpdateConfig(vmr, client)
@@ -590,15 +458,6 @@ func resourceVmQemuRead(d *schema.ResourceData, meta interface{}) error {
 	configNetworksSet := d.Get("network").(*schema.Set)
 	activeNetworksSet := updateDevicesSet(configNetworksSet, config.QemuNetworks)
 	d.Set("network", activeNetworksSet)
-	// Deprecated single disk config.
-	d.Set("storage", config.Storage)
-	d.Set("disk_gb", config.DiskSize)
-	d.Set("storage_type", config.StorageType)
-	// Deprecated single nic config.
-	d.Set("nic", config.QemuNicModel)
-	d.Set("bridge", config.QemuBrige)
-	d.Set("vlan", config.QemuVlanTag)
-	d.Set("mac", config.QemuMacAddr)
 
 	pmParallelEnd(pconf)
 	return nil
@@ -680,6 +539,16 @@ func devicesSetToMap(devicesSet *schema.Set) pxapi.QemuDevices {
 		}
 	}
 	return devicesMap
+}
+
+func devicesListToQemuDevices(devicesList []interface{}) pxapi.QemuDevices {
+
+	qemuDevices := pxapi.QemuDevices{}
+
+	for deviceID, set := range devicesList {
+		qemuDevices[deviceID] = set.(map[string]interface{})
+	}
+	return qemuDevices
 }
 
 // Update schema.TypeSet with new values comes from Proxmox API.
