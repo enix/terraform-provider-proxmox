@@ -226,11 +226,6 @@ import (
 				Type:     schema.TypeString,
 				Optional: true,
 			},
-			"preprovision": {
-				Type:          schema.TypeBool,
-				Optional:      true,
-				Default:       true,
-				ConflictsWith: []string{"ssh_forward_ip", "ssh_user", "ssh_private_key", "os_type", "os_network_config"},
 			},
 		},
 			},
@@ -345,9 +340,6 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 		return err
 	}
 
-	// Apply pre-provision if enabled.
-	preprovision(d, pconf, client, vmr, true)
-
 	return nil
 }
 
@@ -409,9 +401,6 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) error {
 		pmParallelEnd(pconf)
 		return err
 	}
-
-	// Apply pre-provision if enabled.
-	preprovision(d, pconf, client, vmr, false)
 
 	pmParallelEnd(pconf)
 
@@ -615,62 +604,4 @@ func updateDevicesDefaults(
 		}
 	}
 	return activeDevicesMap
-}
-
-// Internal pre-provision.
-func preprovision(
-	d *schema.ResourceData,
-	pconf *providerConfiguration,
-	client *pxapi.Client,
-	vmr *pxapi.VmRef,
-	systemPreProvision bool,
-) error {
-
-	if d.Get("preprovision").(bool) {
-		log.Print("[DEBUG] setting up SSH forward")
-		sshPort, err := pxapi.SshForwardUsernet(vmr, client)
-		if err != nil {
-			pmParallelEnd(pconf)
-			return err
-		}
-
-		// Done with proxmox API, end parallel and do the SSH things
-		pmParallelEnd(pconf)
-
-		d.SetConnInfo(map[string]string{
-			"type":        "ssh",
-			"host":        d.Get("ssh_forward_ip").(string),
-			"port":        sshPort,
-			"user":        d.Get("ssh_user").(string),
-			"private_key": d.Get("ssh_private_key").(string),
-			"pm_api_url":  client.ApiUrl,
-			"pm_user":     client.Username,
-			"pm_password": client.Password,
-		})
-
-		if systemPreProvision {
-			switch d.Get("os_type").(string) {
-
-			case "ubuntu":
-				// give sometime to bootup
-				time.Sleep(9 * time.Second)
-				err = preProvisionUbuntu(d)
-				if err != nil {
-					return err
-				}
-
-			case "centos":
-				// give sometime to bootup
-				time.Sleep(9 * time.Second)
-				err = preProvisionCentos(d)
-				if err != nil {
-					return err
-				}
-
-			default:
-				return fmt.Errorf("Unknown os_type: %s", d.Get("os_type").(string))
-			}
-		}
-	}
-	return nil
 }
