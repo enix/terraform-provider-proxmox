@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,7 +13,9 @@ import (
 	"github.com/hashicorp/terraform/helper/schema"
 )
 
-	func resourceVmQemu() *schema.Resource {
+const vmType = "qemu"
+
+func resourceVmQemu() *schema.Resource {
 	*pxapi.Debug = true
 	return &schema.Resource{
 		Create: resourceVmQemuCreate,
@@ -196,38 +197,38 @@ import (
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"user": {
-				Type:     schema.TypeString,
-				Optional: true,
-			},
+							Type:     schema.TypeString,
+							Optional: true,
+						},
 						"password": {
-				Type:     schema.TypeString,
-				Optional: true,
-			},
-			"searchdomain": {
-				Type:     schema.TypeString,
-				Optional: true,
-			},
-			"nameserver": {
-				Type:     schema.TypeString,
-				Optional: true,
-			},
-			"sshkeys": {
-				Type:     schema.TypeString,
-				Optional: true,
-				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
-					return strings.TrimSpace(old) == strings.TrimSpace(new)
+							Type:     schema.TypeString,
+							Optional: true,
+						},
+						"searchdomain": {
+							Type:     schema.TypeString,
+							Optional: true,
+						},
+						"nameserver": {
+							Type:     schema.TypeString,
+							Optional: true,
+						},
+						"sshkeys": {
+							Type:     schema.TypeString,
+							Optional: true,
+							DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
+								return strings.TrimSpace(old) == strings.TrimSpace(new)
+							},
+						},
+						"ipconfig0": {
+							Type:     schema.TypeString,
+							Optional: true,
+						},
+						"ipconfig1": {
+							Type:     schema.TypeString,
+							Optional: true,
+						},
+					},
 				},
-			},
-			"ipconfig0": {
-				Type:     schema.TypeString,
-				Optional: true,
-			},
-			"ipconfig1": {
-				Type:     schema.TypeString,
-				Optional: true,
-			},
-			},
-		},
 			},
 		},
 	}
@@ -265,73 +266,75 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 	config.Sshkeys, _		= cloudInit["sshkeys"].(string)
 	config.Ipconfig0, _		= cloudInit["ipconfig0"].(string)
 	config.Ipconfig1, _		= cloudInit["ipconfig1"].(string)
+
 	log.Print("[DEBUG] checking for duplicate name")
-	vmr, _ := client.GetVmRefByName(vmName)
-
-	targetNode := d.Get("target_node").(string)
-
-	if vmr != nil {
+	duplicateVmr, _ := client.GetVmRefByName(vmName)
+	if duplicateVmr != nil {
 		pmParallelEnd(pconf)
-		return fmt.Errorf("Duplicate VM name (%s) with vmId: %d on target_node=%s", vmName, vmr.VmId(), vmr.Node())
+		return fmt.Errorf("Duplicate VM name (%s) with vmId: %d on target_node=%s", vmName, duplicateVmr.VmId(), duplicateVmr.Node())
 	}
+
+	log.Print("[DEBUG] get next VmId")
+	nextid, err := nextVmId(pconf)
+	if err != nil {
+		pmParallelEnd(pconf)
+		return err
+	}
+
+	vmr := pxapi.NewVmRef(nextid)
+	vmr.SetNode(d.Get("target_node").(string))
+	vmr.SetVmType(vmType)
 
 	d.Partial(true)
 
-		// get unique id
-		nextid, err := nextVmId(pconf)
+	// check if ISO or clone
+	if d.Get("clone").(string) != "" {
+		sourceVmr, err := client.GetVmRefByName(d.Get("clone").(string))
 		if err != nil {
 			pmParallelEnd(pconf)
 			return err
 		}
-		vmr = pxapi.NewVmRef(nextid)
-
-		vmr.SetNode(targetNode)
-		// check if ISO or clone
-		if d.Get("clone").(string) != "" {
-			sourceVmr, err := client.GetVmRefByName(d.Get("clone").(string))
-			if err != nil {
-				pmParallelEnd(pconf)
-				return err
-			}
-			log.Print("[DEBUG] cloning VM")
-			err = config.CloneVm(sourceVmr, vmr, client)
-			if err != nil {
-				pmParallelEnd(pconf)
-				return err
-			}
-			d.SetId(resourceId(targetNode, "qemu", vmr.VmId()))
-			d.SetPartial("name")
-			d.SetPartial("clone")
-
-			err = config.UpdateConfig(vmr, client)
-			if err != nil {
-				pmParallelEnd(pconf)
-				return err
-			}
-			d.SetPartial("memory")
-
-			// give sometime to proxmox to catchup
-			time.Sleep(5 * time.Second)
-
-			err = prepareDiskSize(client, vmr, qemuDisks)
-			if err != nil {
-				pmParallelEnd(pconf)
-				return err
-			}
-		} else if d.Get("iso").(string) != "" {
-			config.QemuIso = d.Get("iso").(string)
-			err := config.CreateVm(vmr, client)
-			if err != nil {
-				pmParallelEnd(pconf)
-				return err
-			}
-			d.SetPartial("name")
+		log.Print("[DEBUG] cloning VM")
+		err = config.CloneVm(sourceVmr, vmr, client)
+		if err != nil {
+			pmParallelEnd(pconf)
+			return err
 		}
-	d.Partial(false)
+		d.SetId(strconv.Itoa(vmr.VmId()))
+		d.SetPartial("target_node")
+		d.SetPartial("name")
+		d.SetPartial("clone")
 
+		err = config.UpdateConfig(vmr, client)
+		if err != nil {
+			pmParallelEnd(pconf)
+			return err
+		}
+		d.SetPartial("memory")
 
 		// give sometime to proxmox to catchup
 		time.Sleep(5 * time.Second)
+
+		err = prepareDiskSize(client, vmr, qemuDisks)
+		if err != nil {
+			pmParallelEnd(pconf)
+			return err
+		}
+	} else if d.Get("iso").(string) != "" {
+		config.QemuIso = d.Get("iso").(string)
+		err := config.CreateVm(vmr, client)
+		if err != nil {
+			pmParallelEnd(pconf)
+			return err
+		}
+		d.SetId(strconv.Itoa(vmr.VmId()))
+		d.SetPartial("target_node")
+		d.SetPartial("name")
+	}
+	d.Partial(false)
+
+	// give sometime to proxmox to catchup
+	time.Sleep(5 * time.Second)
 
 	log.Print("[DEBUG] starting VM")
 	_, err = client.StartVm(vmr)
@@ -347,19 +350,14 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) error {
 	pconf := meta.(*providerConfiguration)
 	pmParallelBegin(pconf)
 	client := pconf.Client
-	vmr, err := client.GetVmRefByName(d.Get("name").(string))
-	if err != nil {
-		pmParallelEnd(pconf)
-		return err
-	}
-	vmName := d.Get("name").(string)
-	configDisksSet := d.Get("disk").(*schema.Set)
-	qemuDisks := devicesSetToMap(configDisksSet)
-	configNetworksSet := d.Get("network").(*schema.Set)
-	qemuNetworks := devicesSetToMap(configNetworksSet)
+	networks := d.Get("network").([]interface{})
+	qemuNetworks := devicesListToQemuDevices(networks)
+	disks := d.Get("disk").([]interface{})
+	qemuDisks := devicesListToQemuDevices(disks)
+	cloudInit := d.Get("cloud_init").(map[string]interface{})
 
 	config := pxapi.ConfigQemu{
-		Name:         vmName,
+		Name:         d.Get("name").(string),
 		Description:  d.Get("desc").(string),
 		Onboot:       d.Get("onboot").(bool),
 		Memory:       d.Get("memory").(int),
@@ -368,17 +366,22 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) error {
 		QemuOs:       d.Get("qemu_os").(string),
 		QemuNetworks: qemuNetworks,
 		QemuDisks:    qemuDisks,
-		// Cloud-init.
-		CIuser:       d.Get("ciuser").(string),
-		CIpassword:   d.Get("cipassword").(string),
-		Searchdomain: d.Get("searchdomain").(string),
-		Nameserver:   d.Get("nameserver").(string),
-		Sshkeys:      d.Get("sshkeys").(string),
-		Ipconfig0:    d.Get("ipconfig0").(string),
-		Ipconfig1:    d.Get("ipconfig1").(string),
 	}
 
-	err = config.UpdateConfig(vmr, client)
+	config.CIuser, _		= cloudInit["user"].(string)
+	config.CIpassword, _	= cloudInit["password"].(string)
+	config.Searchdomain, _	= cloudInit["searchdomain"].(string)
+	config.Nameserver, _	= cloudInit["nameserver"].(string)
+	config.Sshkeys, _		= cloudInit["sshkeys"].(string)
+	config.Ipconfig0, _		= cloudInit["ipconfig0"].(string)
+	config.Ipconfig1, _		= cloudInit["ipconfig1"].(string)
+
+	vmId, _ := strconv.Atoi(d.Id())
+	vmr := pxapi.NewVmRef(vmId)
+	vmr.SetNode(d.Get("target_node").(string))
+	vmr.SetVmType(vmType)
+
+	err := config.UpdateConfig(vmr, client)
 	if err != nil {
 		pmParallelEnd(pconf)
 		return err
@@ -413,16 +416,19 @@ func resourceVmQemuRead(d *schema.ResourceData, meta interface{}) error {
 	pconf := meta.(*providerConfiguration)
 	pmParallelBegin(pconf)
 	client := pconf.Client
-	vmr, err := client.GetVmRefByName(d.Get("name").(string))
-	if err != nil {
-		return err
-	}
+
+	vmId, _ := strconv.Atoi(d.Id())
+	vmr := pxapi.NewVmRef(vmId)
+	vmr.SetNode(d.Get("target_node").(string))
+	vmr.SetVmType(vmType)
+
 	config, err := pxapi.NewConfigQemuFromApi(vmr, client)
 	if err != nil {
 		pmParallelEnd(pconf)
 		return err
 	}
-	d.SetId(resourceId(vmr.Node(), "qemu", vmr.VmId()))
+
+	d.SetId(strconv.Itoa(vmId))
 	d.Set("target_node", vmr.Node())
 	d.Set("name", config.Name)
 	d.Set("desc", config.Description)
@@ -432,21 +438,26 @@ func resourceVmQemuRead(d *schema.ResourceData, meta interface{}) error {
 	d.Set("sockets", config.QemuSockets)
 	d.Set("qemu_os", config.QemuOs)
 	// Cloud-init.
-	d.Set("ciuser", config.CIuser)
-	d.Set("cipassword", config.CIpassword)
-	d.Set("searchdomain", config.Searchdomain)
-	d.Set("nameserver", config.Nameserver)
-	d.Set("sshkeys", config.Sshkeys)
-	d.Set("ipconfig0", config.Ipconfig0)
-	d.Set("ipconfig1", config.Ipconfig1)
-	// Disks.
-	configDisksSet := d.Get("disk").(*schema.Set)
-	activeDisksSet := updateDevicesSet(configDisksSet, config.QemuDisks)
-	d.Set("disk", activeDisksSet)
+	cloudInitMap := make(map[string]interface{})
+	cloudInitMap["user"] = config.CIuser
+	cloudInitMap["password"] = config.CIpassword
+	cloudInitMap["ipconfig0"] = config.Ipconfig0
+	d.Set("cloud_init", cloudInitMap)
+	// d.Set("cipassword", config.CIpassword)
+	// d.Set("searchdomain", config.Searchdomain)
+	// d.Set("nameserver", config.Nameserver)
+	// d.Set("sshkeys", config.Sshkeys)
+	// d.Set("ipconfig1", config.Ipconfig1)
+	// // Disks.
+	// configDisksSet := d.Get("disk").([]interface{})
+	// activeDisksSet := updateDevicesSet(configDisksSet, config.QemuDisks)
+	// d.Set("disk", activeDisksSet)
+	// d.Set("disk", configDisksSet)
 	// Networks.
-	configNetworksSet := d.Get("network").(*schema.Set)
-	activeNetworksSet := updateDevicesSet(configNetworksSet, config.QemuNetworks)
-	d.Set("network", activeNetworksSet)
+	// configNetworksSet := d.Get("network").([]interface{})
+	// activeNetworksSet := updateDevicesSet(configNetworksSet, config.QemuNetworks)
+	// d.Set("network", activeNetworksSet)
+	// d.Set("network", configNetworksSet)
 
 	pmParallelEnd(pconf)
 	return nil
@@ -462,7 +473,7 @@ func resourceVmQemuDelete(d *schema.ResourceData, meta interface{}) error {
 	pconf := meta.(*providerConfiguration)
 	pmParallelBegin(pconf)
 	client := pconf.Client
-	vmId, _ := strconv.Atoi(path.Base(d.Id()))
+	vmId, _ := strconv.Atoi(d.Id())
 	vmr := pxapi.NewVmRef(vmId)
 	_, err := client.StopVm(vmr)
 	if err != nil {
@@ -483,8 +494,7 @@ func prepareDiskSize(
 	diskConfMap pxapi.QemuDevices,
 ) error {
 	clonedConfig, err := pxapi.NewConfigQemuFromApi(vmr, client)
-	for _, diskConf := range diskConfMap {
-		diskID := diskConf["id"].(int)
+	for diskID, diskConf := range diskConfMap {
 		diskName := fmt.Sprintf("%v%v", diskConf["type"], diskID)
 
 		diskSizeGB := diskConf["size"].(string)
