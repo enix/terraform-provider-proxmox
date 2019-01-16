@@ -22,9 +22,9 @@ func resourceVmQemu() *schema.Resource {
 		Read:   resourceVmQemuRead,
 		Update: resourceVmQemuUpdate,
 		Delete: resourceVmQemuDelete,
-		Importer: &schema.ResourceImporter{
-			State: resourceVmQemuImport,
-		},
+		// Importer: &schema.ResourceImporter{
+		// 	State: resourceVmQemuImport,
+		// },
 
 		Schema: map[string]*schema.Schema{
 			"name": {
@@ -482,11 +482,11 @@ func resourceVmQemuRead(d *schema.ResourceData, meta interface{}) error {
 	return nil
 }
 
-func resourceVmQemuImport(d *schema.ResourceData, meta interface{}) ([]*schema.ResourceData, error) {
-	// TODO: research proper import
-	err := resourceVmQemuRead(d, meta)
-	return []*schema.ResourceData{d}, err
-}
+// func resourceVmQemuImport(d *schema.ResourceData, meta interface{}) ([]*schema.ResourceData, error) {
+// 	// TODO: research proper import
+// 	err := resourceVmQemuRead(d, meta)
+// 	return []*schema.ResourceData{d}, err
+// }
 
 func resourceVmQemuDelete(d *schema.ResourceData, meta interface{}) error {
 	pconf := meta.(*providerConfiguration)
