@@ -191,44 +191,39 @@ func resourceVmQemu() *schema.Resource {
 					return strings.TrimSpace(old) == strings.TrimSpace(new)
 				},
 			},
-			"cloud_init": &schema.Schema{
-				Type:          schema.TypeMap,
-				Optional:      true,
-				Elem: &schema.Resource{
-					Schema: map[string]*schema.Schema{
-						"user": {
-							Type:     schema.TypeString,
-							Optional: true,
-						},
-						"password": {
-							Type:     schema.TypeString,
-							Optional: true,
-						},
-						"searchdomain": {
-							Type:     schema.TypeString,
-							Optional: true,
-						},
-						"nameserver": {
-							Type:     schema.TypeString,
-							Optional: true,
-						},
-						"sshkeys": {
-							Type:     schema.TypeString,
-							Optional: true,
-							DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
-								return strings.TrimSpace(old) == strings.TrimSpace(new)
-							},
-						},
-						"ipconfig0": {
-							Type:     schema.TypeString,
-							Optional: true,
-						},
-						"ipconfig1": {
-							Type:     schema.TypeString,
-							Optional: true,
-						},
-					},
+			"cloudinit_user": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
+			"cloudinit_password": {
+				Type:     schema.TypeString,
+				Optional: true,
+				StateFunc: func(val interface{}) string {
+					return pxapi.HiddenPassword
 				},
+			},
+			"cloudinit_searchdomain": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
+			"cloudinit_nameserver": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
+			"cloudinit_sshkeys": {
+				Type:     schema.TypeString,
+				Optional: true,
+				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
+					return strings.TrimSpace(old) == strings.TrimSpace(new)
+				},
+			},
+			"cloudinit_ipconfig0": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
+			"cloudinit_ipconfig1": {
+				Type:     schema.TypeString,
+				Optional: true,
 			},
 		},
 	}
@@ -245,7 +240,6 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 	qemuNetworks := devicesListToQemuDevices(networks)
 	disks := d.Get("disk").([]interface{})
 	qemuDisks := devicesListToQemuDevices(disks)
-	cloudInit := d.Get("cloud_init").(map[string]interface{})
 
 	config := pxapi.ConfigQemu{
 		Name:         vmName,
@@ -258,14 +252,27 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 		QemuNetworks: qemuNetworks,
 		QemuDisks:    qemuDisks,
 	}
-
-	config.CIuser, _		= cloudInit["user"].(string)
-	config.CIpassword, _	= cloudInit["password"].(string)
-	config.Searchdomain, _	= cloudInit["searchdomain"].(string)
-	config.Nameserver, _	= cloudInit["nameserver"].(string)
-	config.Sshkeys, _		= cloudInit["sshkeys"].(string)
-	config.Ipconfig0, _		= cloudInit["ipconfig0"].(string)
-	config.Ipconfig1, _		= cloudInit["ipconfig1"].(string)
+	if cloudInitUser := d.Get("cloudinit_user").(string); cloudInitUser != "" {
+		config.CIuser = cloudInitUser
+	}
+	if cloudInitPassword := d.Get("cloudinit_password").(string); cloudInitPassword != "" {
+		config.CIpassword = cloudInitPassword
+	}
+	if cloudInitSearchdomain := d.Get("cloudinit_searchdomain").(string); cloudInitSearchdomain != "" {
+		config.Searchdomain = cloudInitSearchdomain
+	}
+	if cloudInitNameserver := d.Get("cloudinit_nameserver").(string); cloudInitNameserver != "" {
+		config.Nameserver = cloudInitNameserver
+	}
+	if cloudInitSshkeys := d.Get("cloudinit_sshkeys").(string); cloudInitSshkeys != "" {
+		config.Sshkeys = cloudInitSshkeys
+	}
+	if cloudInitIpconfig0 := d.Get("cloudinit_ipconfig0").(string); cloudInitIpconfig0 != "" {
+		config.Ipconfig0 = cloudInitIpconfig0
+	}
+	if cloudInitIpconfig1 := d.Get("cloudinit_ipconfig1").(string); cloudInitIpconfig1 != "" {
+		config.Ipconfig1 = cloudInitIpconfig1
+	}
 
 	log.Print("[DEBUG] checking for duplicate name")
 	duplicateVmr, _ := client.GetVmRefByName(vmName)
@@ -439,33 +446,27 @@ func resourceVmQemuRead(d *schema.ResourceData, meta interface{}) error {
 	d.Set("sockets", config.QemuSockets)
 	d.Set("qemu_os", config.QemuOs)
 
-	newCloudInitMap := make(map[string]interface{})
-	oldCloudInitMap := d.Get("cloud_init").(map[string]interface{})
 	if config.CIuser != "" {
-		newCloudInitMap["user"]	= config.CIuser
+		d.Set("cloudinit_user", config.CIuser)
 	}
 	if config.CIpassword != "" {
-		// Proxmox do not give back the password and replaces every character by *
-		// StateFunc does not seem to work to rewrite as *
-		// newCloudInitMap["password"] = config.CIpassword
-		newCloudInitMap["password"]	= oldCloudInitMap["password"]
+		d.Set("cloudinit_password", config.CIpassword)
 	}
 	if config.Searchdomain != "" {
-		newCloudInitMap["searchdomain"]	= config.Searchdomain
+		d.Set("cloudinit_searchdomain", config.Searchdomain)
 	}
 	if config.Nameserver != "" {
-		newCloudInitMap["nameserver"]	= config.Nameserver
+		d.Set("cloudinit_nameserver", config.Nameserver)
 	}
 	if config.Sshkeys != "" {
-		newCloudInitMap["sshkeys"]	= config.Sshkeys
+		d.Set("cloudinit_sshkeys", config.Sshkeys)
 	}
 	if config.Ipconfig0 != "" {
-		newCloudInitMap["ipconfig0"]	= config.Ipconfig0
+		d.Set("cloudinit_ipconfig0", config.Ipconfig0)
 	}
 	if config.Ipconfig1 != "" {
-		newCloudInitMap["ipconfig1"]	= config.Ipconfig1
+		d.Set("cloudinit_ipconfig1", config.Ipconfig1)
 	}
-	d.Set("cloud_init", newCloudInitMap)
 
 	// // Disks.
 	// configDisksSet := d.Get("disk").([]interface{})
