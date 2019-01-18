@@ -22,6 +22,7 @@ func resourceVmQemu() *schema.Resource {
 		Read:   resourceVmQemuRead,
 		Update: resourceVmQemuUpdate,
 		Delete: resourceVmQemuDelete,
+		Exists: resourceVmQemuExists,
 		// Importer: &schema.ResourceImporter{
 		// 	State: resourceVmQemuImport,
 		// },
@@ -505,6 +506,20 @@ func resourceVmQemuDelete(d *schema.ResourceData, meta interface{}) error {
 	_, err = client.DeleteVm(vmr)
 	pmParallelEnd(pconf)
 	return err
+
+func resourceVmQemuExists(d *schema.ResourceData, meta interface{}) (exists bool, err error) {
+	pconf := meta.(*providerConfiguration)
+	pmParallelBegin(pconf)
+	defer pmParallelEnd(pconf)
+	client := pconf.Client
+	vmId, _ := strconv.Atoi(d.Id())
+	vmr := pxapi.NewVmRef(vmId)
+
+	_, err = client.GetVmState(vmr)
+	if err != nil {
+		return false, nil
+}
+	return true, nil
 }
 
 // Increase disk size if original disk was smaller than new disk.
