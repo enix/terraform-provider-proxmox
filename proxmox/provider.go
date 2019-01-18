@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"strconv"
 	"sync"
-	"log"
 
 	pxapi "github.com/enix/proxmox-api-go/proxmox"
 	"github.com/hashicorp/terraform/helper/schema"
