@@ -237,43 +237,12 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) (err error) 
 	pmParallelBegin(pconf)
 	defer pmParallelEnd(pconf)
 	client := pconf.Client
-	vmName := d.Get("name").(string)
-	networks := d.Get("network").([]interface{})
-	qemuNetworks := devicesListToQemuDevices(networks)
-	disks := d.Get("disk").([]interface{})
-	qemuDisks := devicesListToQemuDevices(disks)
 
-	config := pxapi.ConfigQemu{
-		Name:         vmName,
-		Description:  d.Get("desc").(string),
-		Onboot:       d.Get("onboot").(bool),
-		Memory:       d.Get("memory").(int),
-		QemuCores:    d.Get("cores").(int),
-		QemuSockets:  d.Get("sockets").(int),
-		QemuOs:       d.Get("qemu_os").(string),
-		QemuNetworks: qemuNetworks,
-		QemuDisks:    qemuDisks,
-	}
-	if cloudInitUser := d.Get("cloudinit_user").(string); cloudInitUser != "" {
-		config.CIuser = cloudInitUser
-	}
-	if cloudInitPassword := d.Get("cloudinit_password").(string); cloudInitPassword != "" {
-		config.CIpassword = cloudInitPassword
-	}
-	if cloudInitSearchdomain := d.Get("cloudinit_searchdomain").(string); cloudInitSearchdomain != "" {
-		config.Searchdomain = cloudInitSearchdomain
-	}
-	if cloudInitNameserver := d.Get("cloudinit_nameserver").(string); cloudInitNameserver != "" {
-		config.Nameserver = cloudInitNameserver
-	}
-	if cloudInitSshkeys := d.Get("cloudinit_sshkeys").(string); cloudInitSshkeys != "" {
-		config.Sshkeys = cloudInitSshkeys
-	}
-	if cloudInitIpconfig0 := d.Get("cloudinit_ipconfig0").(string); cloudInitIpconfig0 != "" {
-		config.Ipconfig0 = cloudInitIpconfig0
-	}
-	if cloudInitIpconfig1 := d.Get("cloudinit_ipconfig1").(string); cloudInitIpconfig1 != "" {
-		config.Ipconfig1 = cloudInitIpconfig1
+	// generate Proxmox configuration from Terraform configuration
+	var config *pxapi.ConfigQemu
+	config, err = state2ConfigQemu(d)
+	if err != nil {
+		return
 	}
 
 	log.Print("[DEBUG] get next VmId")
@@ -309,16 +278,24 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) (err error) 
 		if err != nil {
 			return
 		}
+		d.SetPartial("network")
 		d.SetPartial("memory")
-		d.SetPartial("cloud_init")
+		d.SetPartial("cloudinit_user")
+		d.SetPartial("cloudinit_password")
+		d.SetPartial("cloudinit_searchdomain")
+		d.SetPartial("cloudinit_nameserver")
+		d.SetPartial("cloudinit_sshkeys")
+		d.SetPartial("cloudinit_ipconfig0")
+		d.SetPartial("cloudinit_ipconfig1")
 
 		// give sometime to proxmox to catchup
 		time.Sleep(5 * time.Second)
 
-		err = prepareDiskSize(client, vmr, qemuDisks)
+		err = prepareDiskSize(client, vmr, devicesList2QemuDevices(d.Get("disk").([]interface{})))
 		if err != nil {
 			return
 		}
+		d.SetPartial("disk")
 	} else if d.Get("iso").(string) != "" {
 		config.QemuIso = d.Get("iso").(string)
 		err = config.CreateVm(vmr, client)
@@ -347,31 +324,13 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) (err error) 
 	pmParallelBegin(pconf)
 	defer pmParallelEnd(pconf)
 	client := pconf.Client
-	networks := d.Get("network").([]interface{})
-	qemuNetworks := devicesListToQemuDevices(networks)
-	disks := d.Get("disk").([]interface{})
-	qemuDisks := devicesListToQemuDevices(disks)
-	cloudInit := d.Get("cloud_init").(map[string]interface{})
 
-	config := pxapi.ConfigQemu{
-		Name:         d.Get("name").(string),
-		Description:  d.Get("desc").(string),
-		Onboot:       d.Get("onboot").(bool),
-		Memory:       d.Get("memory").(int),
-		QemuCores:    d.Get("cores").(int),
-		QemuSockets:  d.Get("sockets").(int),
-		QemuOs:       d.Get("qemu_os").(string),
-		QemuNetworks: qemuNetworks,
-		QemuDisks:    qemuDisks,
+	// generate Proxmox configuration from Terraform configuration
+	var config *pxapi.ConfigQemu
+	config, err = state2ConfigQemu(d)
+	if err != nil {
+		return
 	}
-
-	config.CIuser, _		= cloudInit["user"].(string)
-	config.CIpassword, _	= cloudInit["password"].(string)
-	config.Searchdomain, _	= cloudInit["searchdomain"].(string)
-	config.Nameserver, _	= cloudInit["nameserver"].(string)
-	config.Sshkeys, _		= cloudInit["sshkeys"].(string)
-	config.Ipconfig0, _		= cloudInit["ipconfig0"].(string)
-	config.Ipconfig1, _		= cloudInit["ipconfig1"].(string)
 
 	vmId, _ := strconv.Atoi(d.Id())
 	vmr := pxapi.NewVmRef(vmId)
@@ -386,7 +345,7 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) (err error) 
 	// give sometime to proxmox to catchup
 	time.Sleep(5 * time.Second)
 
-	prepareDiskSize(client, vmr, qemuDisks)
+	prepareDiskSize(client, vmr, devicesList2QemuDevices(d.Get("disk").([]interface{})))
 
 	// give sometime to proxmox to catchup
 	time.Sleep(5 * time.Second)
@@ -476,6 +435,7 @@ func resourceVmQemuRead(d *schema.ResourceData, meta interface{}) (err error) {
 func resourceVmQemuDelete(d *schema.ResourceData, meta interface{}) (err error) {
 	pconf := meta.(*providerConfiguration)
 	pmParallelBegin(pconf)
+	defer pmParallelEnd(pconf)
 	client := pconf.Client
 	vmId, _ := strconv.Atoi(d.Id())
 	vmr := pxapi.NewVmRef(vmId)
@@ -500,9 +460,10 @@ func resourceVmQemuExists(d *schema.ResourceData, meta interface{}) (exists bool
 	_, err = client.GetVmState(vmr)
 	if err != nil {
 		return false, nil
-}
+	}
 	return true, nil
 }
+
 
 // Increase disk size if original disk was smaller than new disk.
 func prepareDiskSize(
@@ -539,30 +500,6 @@ func prepareDiskSize(
 		}
 	}
 	return nil
-}
-
-// func devicesSetToMap(devicesSet *schema.Set) pxapi.QemuDevices {
-
-// 	devicesMap := pxapi.QemuDevices{}
-
-// 	for _, set := range devicesSet.List() {
-// 		setMap, isMap := set.(map[string]interface{})
-// 		if isMap {
-// 			setID := setMap["id"].(int)
-// 			devicesMap[setID] = setMap
-// 		}
-// 	}
-// 	return devicesMap
-// }
-
-func devicesListToQemuDevices(devicesList []interface{}) pxapi.QemuDevices {
-
-	qemuDevices := pxapi.QemuDevices{}
-
-	for deviceID, set := range devicesList {
-		qemuDevices[deviceID] = set.(map[string]interface{})
-	}
-	return qemuDevices
 }
 
 // Update schema.TypeSet with new values comes from Proxmox API.
