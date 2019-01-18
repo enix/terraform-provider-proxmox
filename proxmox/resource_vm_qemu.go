@@ -276,13 +276,6 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) (err error) 
 		config.Ipconfig1 = cloudInitIpconfig1
 	}
 
-	log.Print("[DEBUG] checking for duplicate name")
-	duplicateVmr, _ := client.GetVmRefByName(vmName)
-	if duplicateVmr != nil {
-		pmParallelEnd(pconf)
-		return fmt.Errorf("Duplicate VM name (%s) with vmId: %d on target_node=%s", vmName, duplicateVmr.VmId(), duplicateVmr.Node())
-	}
-
 	log.Print("[DEBUG] get next VmId")
 	nextid, err := nextVmId(pconf)
 	if err != nil {
