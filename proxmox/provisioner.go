@@ -45,7 +45,12 @@ func applyFn(ctx context.Context) error {
 	vmr.SetNode(targetNode)
 	client := currentClient
 	if client == nil {
-		client, err = getClient(connInfo["pm_api_url"], connInfo["pm_user"], connInfo["pm_password"], connInfo["pm_tls_insecure"] == "true")
+		client, err := pxapi.NewClient(&pxapi.Configuration{
+			Url:			connInfo["api_url"],	
+			Username:		connInfo["api_username"],
+			Password:		connInfo["api_password"],
+			TlsInsecure:	connInfo["api_tls_insecure"] == "true",
+			}, true)
 		if err != nil {
 			return err
 		}

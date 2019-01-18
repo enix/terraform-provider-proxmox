@@ -1,11 +1,11 @@
 package proxmox
 
 import (
-	"crypto/tls"
 	"fmt"
 	"regexp"
 	"strconv"
 	"sync"
+	"log"
 
 	pxapi "github.com/enix/proxmox-api-go/proxmox"
 	"github.com/hashicorp/terraform/helper/schema"
@@ -25,34 +25,45 @@ func Provider() *schema.Provider {
 	return &schema.Provider{
 
 		Schema: map[string]*schema.Schema{
-			"pm_user": {
+			"api_username": {
 				Type:        schema.TypeString,
 				Required:    true,
-				DefaultFunc: schema.EnvDefaultFunc("PM_USER", nil),
+				DefaultFunc: schema.EnvDefaultFunc("PROXMOX_USER", nil),
 				Description: "username, maywith with @pam",
 			},
-			"pm_password": {
+			"api_password": {
 				Type:        schema.TypeString,
 				Required:    true,
-				DefaultFunc: schema.EnvDefaultFunc("PM_PASS", nil),
+				DefaultFunc: schema.EnvDefaultFunc("PROMOX_PASS", nil),
 				Description: "secret",
 				Sensitive:   true,
 			},
-			"pm_api_url": {
+			"api_url": {
 				Type:        schema.TypeString,
 				Required:    true,
 				DefaultFunc: schema.EnvDefaultFunc("PM_API_URL", nil),
 				Description: "https://host.fqdn:8006/api2/json",
 			},
-			"pm_parallel": {
-				Type:     schema.TypeInt,
-				Optional: true,
-				Default:  4,
-			},
-			"pm_tls_insecure": {
+			"api_tls_insecure": {
 				Type:     schema.TypeBool,
 				Optional: true,
 				Default:  false,
+			},
+			"api_parallel_clones": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  false,
+			},
+			"api_parallel_resizes": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  false,
+			},
+
+			"parallel_resources": {
+				Type:     schema.TypeInt,
+				Optional: true,
+				Default:  4,
 			},
 		},
 
@@ -67,33 +78,28 @@ func Provider() *schema.Provider {
 	}
 }
 
-func providerConfigure(d *schema.ResourceData) (interface{}, error) {
-	client, err := getClient(d.Get("pm_api_url").(string), d.Get("pm_user").(string), d.Get("pm_password").(string), d.Get("pm_tls_insecure").(bool))
+func providerConfigure(d *schema.ResourceData) (configuration interface{}, err error) {
+	client, err := pxapi.NewClient(&pxapi.Configuration{
+		Url:			d.Get("api_url").(string),	
+		Username:		d.Get("api_username").(string),
+		Password:		d.Get("api_password").(string),
+		TlsInsecure:	d.Get("api_tls_insecure").(bool),
+		ParallelClone:	d.Get("api_parallel_clones").(bool),
+		ParallelResize:	d.Get("api_parallel_resizes").(bool),
+		}, true)
+
 	if err != nil {
 		return nil, err
 	}
 	var mut sync.Mutex
 	return &providerConfiguration{
 		Client:          client,
-		MaxParallel:     d.Get("pm_parallel").(int),
+		MaxParallel:     d.Get("parallel_resources").(int),
 		CurrentParallel: 0,
 		MaxVMID:         -1,
 		Mutex:           &mut,
 		Cond:            sync.NewCond(&mut),
 	}, nil
-}
-
-func getClient(pm_api_url string, pm_user string, pm_password string, pm_tls_insecure bool) (*pxapi.Client, error) {
-	tlsconf := &tls.Config{InsecureSkipVerify: true}
-	if !pm_tls_insecure {
-		tlsconf = nil
-	}
-	client, _ := pxapi.NewClient(pm_api_url, nil, tlsconf)
-	err := client.Login(pm_user, pm_password)
-	if err != nil {
-		return nil, err
-	}
-	return client, nil
 }
 
 func nextVmId(pconf *providerConfiguration) (nextId int, err error) {
