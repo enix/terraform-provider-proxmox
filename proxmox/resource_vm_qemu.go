@@ -31,6 +31,7 @@ func resourceVmQemu() *schema.Resource {
 			"name": {
 				Type:     schema.TypeString,
 				Required: true,
+				ForceNew: true, // as we want the VM hostname to be consistent
 			},
 			"desc": {
 				Type:     schema.TypeString,
@@ -246,12 +247,13 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) (err error) 
 	}
 
 	log.Print("[DEBUG] get next VmId")
-	nextid, err := nextVmId(pconf)
+	var nextId int
+	nextId, err = nextVmId(pconf)
 	if err != nil {
 		return
 	}
 
-	vmr := pxapi.NewVmRef(nextid)
+	vmr := pxapi.NewVmRef(nextId)
 	vmr.SetNode(d.Get("target_node").(string))
 	vmr.SetVmType(vmType)
 
