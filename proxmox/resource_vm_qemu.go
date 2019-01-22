@@ -240,17 +240,15 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) (err error) 
 	client := pconf.Client
 
 	// generate Proxmox configuration from Terraform configuration
-	var config *pxapi.ConfigQemu
-	config, err = state2ConfigQemu(d)
+	config, err := state2ConfigQemu(d)
 	if err != nil {
-		return
+		return err
 	}
 
 	log.Print("[DEBUG] get next VmId")
-	var nextId int
-	nextId, err = nextVmId(pconf)
+	nextId, err := nextVmId(pconf)
 	if err != nil {
-		return
+		return err
 	}
 
 	vmr := pxapi.NewVmRef(nextId)
@@ -261,15 +259,14 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) (err error) 
 
 	// check if ISO or clone
 	if d.Get("clone").(string) != "" {
-		var sourceVmr *pxapi.VmRef
-		sourceVmr, err = client.GetVmRefByName(d.Get("clone").(string))
+		sourceVmr, err := client.GetVmRefByName(d.Get("clone").(string))
 		if err != nil {
-			return
+			return err
 		}
 		log.Print("[DEBUG] cloning VM")
 		err = config.CloneVm(sourceVmr, vmr, client)
 		if err != nil {
-			return
+			return err
 		}
 		d.SetId(strconv.Itoa(vmr.VmId()))
 		d.SetPartial("target_node")
@@ -278,7 +275,7 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) (err error) 
 
 		err = config.UpdateConfig(vmr, client)
 		if err != nil {
-			return
+			return err
 		}
 		d.SetPartial("network")
 		d.SetPartial("memory")
@@ -295,14 +292,14 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) (err error) 
 
 		err = prepareDiskSize(client, vmr, devicesList2QemuDevices(d.Get("disk").([]interface{})))
 		if err != nil {
-			return
+			return err
 		}
 		d.SetPartial("disk")
 	} else if d.Get("iso").(string) != "" {
 		config.QemuIso = d.Get("iso").(string)
 		err = config.CreateVm(vmr, client)
 		if err != nil {
-			return
+			return err
 		}
 		d.SetId(strconv.Itoa(vmr.VmId()))
 		d.SetPartial("target_node")
@@ -316,7 +313,7 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) (err error) 
 	log.Print("[DEBUG] starting VM")
 	_, err = client.StartVm(vmr)
 	if err != nil {
-		return
+		return err
 	}
 	return
 }
@@ -328,10 +325,9 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) (err error) 
 	client := pconf.Client
 
 	// generate Proxmox configuration from Terraform configuration
-	var config *pxapi.ConfigQemu
-	config, err = state2ConfigQemu(d)
+	config, err := state2ConfigQemu(d)
 	if err != nil {
-		return
+		return err
 	}
 
 	vmId, _ := strconv.Atoi(d.Id())
@@ -341,7 +337,7 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) (err error) 
 
 	err = config.UpdateConfig(vmr, client)
 	if err != nil {
-		return
+		return err
 	}
 
 	// give sometime to proxmox to catchup
@@ -355,7 +351,7 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) (err error) 
 	// Start VM only if it wasn't running.
 	vmState, err := client.GetVmState(vmr)
 	if err != nil {
-		return
+		return err
 	}
 	if vmState["status"] == "stopped" {
 		log.Print("[DEBUG] starting VM")
@@ -379,7 +375,7 @@ func resourceVmQemuRead(d *schema.ResourceData, meta interface{}) (err error) {
 
 	config, err := pxapi.NewConfigQemuFromApi(vmr, client)
 	if err != nil {
-		return
+		return err
 	}
 
 	d.SetId(strconv.Itoa(vmId))
@@ -443,7 +439,7 @@ func resourceVmQemuDelete(d *schema.ResourceData, meta interface{}) (err error) 
 	vmr := pxapi.NewVmRef(vmId)
 	_, err = client.StopVm(vmr)
 	if err != nil {
-		return
+		return err
 	}
 	// give sometime to proxmox to catchup
 	time.Sleep(2 * time.Second)
